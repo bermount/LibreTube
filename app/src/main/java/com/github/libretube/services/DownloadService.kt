@@ -89,6 +89,8 @@ class DownloadService : LifecycleService() {
     private lateinit var summaryNotificationBuilder: Builder
 
     private val downloadQueue = SparseBooleanArray()
+    private val pendingDownloads = mutableListOf<Int>()
+
     private val _downloadFlow = MutableSharedFlow<Pair<Int, DownloadStatus>>()
     val downloadFlow: SharedFlow<Pair<Int, DownloadStatus>> = _downloadFlow
 
@@ -106,6 +108,7 @@ class DownloadService : LifecycleService() {
         notifyForeground()
         sendBroadcast(Intent(ACTION_SERVICE_STARTED))
     }
+
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
@@ -195,7 +198,6 @@ class DownloadService : LifecycleService() {
         var totalRead = item.path.fileSize()
         val url = URL(ProxyHelper.rewriteUrlUsingProxyPreference(item.url ?: return))
 
-        // only fetch the content length if it's not been returned by the API
         if (item.downloadSize <= 0L) {
             url.getContentLength()?.let { size ->
                 item.downloadSize = size
@@ -210,19 +212,13 @@ class DownloadService : LifecycleService() {
                 break
             } catch (e: Exception) {
                 toastFromMainThread("${getString(R.string.download)}: ${e.message}")
-                Log.e(this@DownloadService::class.java.name, e.stackTraceToString())
                 _downloadFlow.emit(item.id to DownloadStatus.Error(e.message.toString(), e))
                 break
             }
         }
 
         val completed = totalRead >= item.downloadSize
-        if (completed) {
-            _downloadFlow.emit(item.id to DownloadStatus.Completed)
-        } else {
-            _downloadFlow.emit(item.id to DownloadStatus.Paused)
-        }
-
+        _downloadFlow.emit(item.id to if (completed) DownloadStatus.Completed else DownloadStatus.Paused)
         setPauseNotification(notificationBuilder, item, completed)
 
         downloadQueue[item.id] = false
@@ -231,10 +227,10 @@ class DownloadService : LifecycleService() {
             downloadQueue.remove(item.id, false)
         }
 
-        // start the next download if there are any remaining ones enqueued
-        val nextDownload = downloadFlow.firstOrNull { (_, status) -> status == DownloadStatus.Paused }
-        if (nextDownload != null) {
-            resume(nextDownload.first)
+        // ✅ Check and start next from pendingDownloads queue if slots are available
+        if (pendingDownloads.isNotEmpty() && mayStartNewDownload()) {
+            val nextId = pendingDownloads.removeAt(0)
+            resume(nextId)
         } else {
             stopServiceIfDone()
         }
