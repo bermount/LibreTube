@@ -1,0 +1,51 @@
+name: Test Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ A-download ]
+#  pull_request:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build apk
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set Up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          validate-wrappers: true
+          gradle-home-cache-cleanup: true
+
+      - name: Build Project with Gradle
+        run: ./gradlew assembleDebug
+
+      - name: Rename APK with date and time and export variables
+        id: rename
+        run: |
+          DATE=$(date +'%Y%m%d_%H%M%S')
+          BRANCH_NAME=$(echo "${{ github.ref }}" | sed 's/refs\/heads\///g' | sed 's/\//-/g')
+          APK_NAME="LibreTube_${BRANCH_NAME}_$DATE.apk"
+          mv ./app/build/outputs/apk/debug/app-arm64-v8a-debug.apk ./app/build/outputs/apk/debug/$APK_NAME
+          echo "apk_name=$APK_NAME" >> $GITHUB_OUTPUT
+          echo "artifact_name=${APK_NAME%.apk}" >> $GITHUB_OUTPUT
+
+      - name: Upload artifact with dynamic name
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.rename.outputs.artifact_name }}
+          path: ./app/build/outputs/apk/debug/${{ steps.rename.outputs.apk_name }}
