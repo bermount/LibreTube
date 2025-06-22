@@ -8,7 +8,7 @@ on:
       - "fastlane/**"
       - "assets/**"
       - ".github/**/*.md"
-  push:
+#  push:
     paths-ignore:
       - "README*.md"
       - "fastlane/**"
