@@ -55,6 +55,7 @@ import com.github.libretube.ui.models.SearchViewModel
 import com.github.libretube.ui.models.SubscriptionsViewModel
 import com.github.libretube.ui.preferences.BackupRestoreSettings
 import com.github.libretube.ui.preferences.BackupRestoreSettings.Companion.FILETYPE_ANY
+import com.github.libretube.helpers.SafAutoSyncHelper
 import com.github.libretube.util.UpdateChecker
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlinx.coroutines.Dispatchers
@@ -98,6 +99,11 @@ class MainActivity : BaseActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+
+        // Auto-Import on Start
+        lifecycleScope.launch {
+            SafAutoSyncHelper.importData(this@MainActivity)
+        }
 
         // show noInternet Activity if no internet available on app startup
         if (!NetworkHelper.isNetworkAvailable(this)) {
@@ -227,6 +233,16 @@ class MainActivity : BaseActivity() {
         loadIntentData()
 
         showUserInfoDialogIfNeeded()
+    }
+
+    override fun onDestroy() {
+        // Auto-Export to SAF folder on exit
+        lifecycleScope.launch {
+            com.github.libretube.helpers.SafAutoSyncHelper.exportData(this@MainActivity)
+        }
+        super.onDestroy()
+        // clean up the cache
+        cacheDir.deleteRecursively()
     }
 
     /**

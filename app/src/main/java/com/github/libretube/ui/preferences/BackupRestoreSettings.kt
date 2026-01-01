@@ -16,6 +16,7 @@ import com.github.libretube.enums.ImportFormat
 import com.github.libretube.helpers.BackupHelper
 import com.github.libretube.helpers.ImportHelper
 import com.github.libretube.helpers.PreferenceHelper
+import com.github.libretube.helpers.SafAutoSyncHelper
 import com.github.libretube.obj.BackupFile
 import com.github.libretube.ui.base.BasePreferenceFragment
 import com.github.libretube.ui.dialogs.BackupDialog
@@ -34,6 +35,13 @@ class BackupRestoreSettings : BasePreferenceFragment() {
     private var importFormat: ImportFormat = ImportFormat.NEWPIPE
 
     override val titleResourceId: Int = R.string.backup_restore
+
+    // Auto-Sync Folder Picker
+    private val pickSyncFolder = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            SafAutoSyncHelper.setSyncUri(requireContext(), uri)
+        }
+    }
 
     // backup and restore database
     private val getBackupFile =
@@ -205,6 +213,19 @@ class BackupRestoreSettings : BasePreferenceFragment() {
             createBackupFile.launch("libretube-backup-${timestamp}.json")
         }
         val advancedBackup = findPreference<Preference>("backup")
+
+        // Add Auto-Sync Folder Preference
+        val syncPref = Preference(requireContext()).apply {
+            title = "Auto-Sync Folder (SAF)"
+            summary = "Select a folder to auto-sync History and Playlists"
+            order = advancedBackup?.order?.minus(1) ?: 0
+            setOnPreferenceClickListener {
+                pickSyncFolder.launch(null)
+                true
+            }
+        }
+        advancedBackup?.parent?.addPreference(syncPref)
+
         advancedBackup?.setOnPreferenceClickListener {
             BackupDialog().show(childFragmentManager, null)
             true
