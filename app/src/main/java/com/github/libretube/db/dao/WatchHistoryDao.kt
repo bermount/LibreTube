@@ -27,6 +27,9 @@ interface WatchHistoryDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(watchHistoryItems: List<WatchHistoryItem>)
 
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertAllSync(watchHistoryItems: List<WatchHistoryItem>)
+
     @Delete
     suspend fun delete(watchHistoryItem: WatchHistoryItem)
 

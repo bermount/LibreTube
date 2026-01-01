@@ -110,10 +110,10 @@ object SafAutoSyncHelper {
 
             // 데이터 병합 (기존 데이터 유지 + 새 데이터 추가/갱신)
             if (!backupData.watchHistory.isNullOrEmpty()) {
-                Database.watchHistoryDao().insertAll(backupData.watchHistory!!)
+                Database.watchHistoryDao().insertAllSync(backupData.watchHistory!!)
             }
             if (!backupData.watchPositions.isNullOrEmpty()) {
-                Database.watchPositionDao().insertAll(backupData.watchPositions!!)
+                Database.watchPositionDao().insertAllSync(backupData.watchPositions!!)
             }
 
             withContext(Dispatchers.Main) {

@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import com.github.libretube.db.obj.WatchPosition
 
 @Dao
@@ -19,6 +20,16 @@ interface WatchPositionDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(watchPositions: List<WatchPosition>)
+
+    @Transaction
+    suspend fun insertAllSync(watchPositions: List<WatchPosition>) {
+        for (item in watchPositions) {
+            val existing = findById(item.videoId)
+            if (existing == null || item.lastModified > existing.lastModified) {
+                insert(item)
+            }
+        }
+    }
 
     @Query("DELETE FROM watchPosition WHERE videoId = :id")
     suspend fun deleteByVideoId(id: String)
