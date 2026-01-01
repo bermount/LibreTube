@@ -7,12 +7,10 @@ import android.util.Log
 import androidx.core.content.edit
 import androidx.documentfile.provider.DocumentFile
 import androidx.preference.PreferenceManager
-import com.github.libretube.R
 import com.github.libretube.api.JsonHelper
 import com.github.libretube.db.DatabaseHolder.Database
-import com.github.libretube.extensions.TAG
-import com.github.libretube.extensions.toastFromMainDispatcher
 import com.github.libretube.obj.BackupFile
+import com.github.libretube.db.obj.LocalPlaylistWithVideos
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.ExperimentalSerializationApi
@@ -20,6 +18,7 @@ import kotlinx.serialization.json.decodeFromStream
 import kotlinx.serialization.json.encodeToStream
 
 object SafAutoSyncHelper {
+    private const val TAG = "SafAutoSyncHelper"
     private const val PREF_SYNC_URI = "saf_auto_sync_uri"
     private const val SYNC_FILE_NAME = "libretube_autosync.json"
 
@@ -31,16 +30,12 @@ object SafAutoSyncHelper {
 
     fun setSyncUri(context: Context, uri: Uri) {
         val resolver = context.contentResolver
-        // 기존 권한 해제 (선택 사항)
         getSyncUri(context)?.let { oldUri ->
             try {
                 resolver.releasePersistableUriPermission(oldUri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-            } catch (e: Exception) { /* 무시 */ }
+            } catch (e: Exception) { /* Ignore */ }
         }
-
-        // 새 권한 영구 획득
         resolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-
         PreferenceManager.getDefaultSharedPreferences(context).edit {
             putString(PREF_SYNC_URI, uri.toString())
         }
@@ -49,47 +44,88 @@ object SafAutoSyncHelper {
     @OptIn(ExperimentalSerializationApi::class)
     suspend fun exportData(context: Context) = withContext(Dispatchers.IO) {
         val treeUri = getSyncUri(context) ?: return@withContext
-        val resolver = context.contentResolver
         val treeFile = DocumentFile.fromTreeUri(context, treeUri)
+        if (treeFile == null || !treeFile.canWrite()) return@withContext
 
-        if (treeFile == null || !treeFile.canWrite()) {
-            Log.e(TAG(), "Sync folder not accessible")
-            return@withContext
-        }
-
-        // 기존 파일 찾기 또는 생성
         val file = treeFile.findFile(SYNC_FILE_NAME) ?: treeFile.createFile("application/json", SYNC_FILE_NAME)
-
-        if (file == null) {
-            Log.e(TAG(), "Could not create sync file")
-            return@withContext
-        }
-
-        // DB에서 데이터 가져오기 (WatchHistory, WatchPosition만)
-        val watchHistory = Database.watchHistoryDao().getAll()
-        val watchPositions = Database.watchPositionDao().getAll()
-
-        val backupData = BackupFile(
-            watchHistory = watchHistory,
-            watchPositions = watchPositions,
-            // 나머지는 기본값(empty) 사용하여 덮어쓰기 방지하거나 최소화
-            searchHistory = null,
-            customInstances = null,
-            playlistBookmarks = null,
-            preferences = null,
-            groups = null,
-            subscriptions = null,
-            localPlaylists = null,
-            playlists = null
-        )
+        if (file == null) return@withContext
 
         try {
-            resolver.openOutputStream(file.uri)?.use { outputStream ->
-                JsonHelper.json.encodeToStream(backupData, outputStream)
+            var existingBackup: BackupFile? = null
+            try {
+                if (file.length() > 0) {
+                    context.contentResolver.openInputStream(file.uri)?.use { inputStream ->
+                        existingBackup = JsonHelper.json.decodeFromStream<BackupFile>(inputStream)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not read existing file, starting fresh export.", e)
             }
-            Log.d(TAG(), "Auto-sync export successful")
+
+            // Fetch local data
+            val localHistory = Database.watchHistoryDao().getAll()
+            val localPositions = Database.watchPositionDao().getAll()
+            val localBookmarks = Database.playlistBookmarkDao().getAll()
+            val localSearch = Database.searchHistoryDao().getAll()
+            val localGroups = Database.subscriptionGroupsDao().getAll()
+            val localSubs = Database.localSubscriptionDao().getAll()
+            // getAll() returns List<LocalPlaylistWithVideos> in LocalPlaylistsDao
+            val localPlaylists = Database.localPlaylistsDao().getAll()
+
+            // Merge Logic: Using correct Primary Keys from provided files
+
+            // WatchHistoryItem: PrimaryKey is 'videoId'
+            val mergedHistory = (existingBackup?.watchHistory.orEmpty() + localHistory)
+                .distinctBy { it.videoId }
+
+            // WatchPosition: PrimaryKey is 'videoId'
+            val mergedPositions = (existingBackup?.watchPositions.orEmpty() + localPositions)
+                .distinctBy { it.videoId }
+
+            // PlaylistBookmark: PrimaryKey is 'playlistId'
+            val mergedBookmarks = (existingBackup?.playlistBookmarks.orEmpty() + localBookmarks)
+                .distinctBy { it.playlistId }
+
+            // SearchHistoryItem: assuming 'query' is unique (standard)
+            val mergedSearch = (existingBackup?.searchHistory.orEmpty() + localSearch)
+                .distinctBy { it.query }
+
+            // SubscriptionGroup: PrimaryKey is 'name' (not id)
+            val mergedGroups = (existingBackup?.groups.orEmpty() + localGroups)
+                .distinctBy { it.name }
+
+            // LocalSubscription: PrimaryKey is 'channelId' (not url)
+            val mergedSubs = (existingBackup?.subscriptions.orEmpty() + localSubs)
+                .distinctBy { it.channelId }
+
+            // Local Playlists Merge (ID is Int, but we merge by Name to sync across devices)
+            val allPlaylists = (existingBackup?.localPlaylists.orEmpty() + localPlaylists)
+            val mergedPlaylists = allPlaylists.groupBy { it.playlist.name }.map { (_, lists) ->
+                val masterPlaylist = lists.first().playlist
+                // distinctBy videoId (String) to avoid duplicate videos
+                val combinedVideos = lists.flatMap { it.videos }.distinctBy { it.videoId }
+
+                LocalPlaylistWithVideos(masterPlaylist, combinedVideos)
+            }
+
+            val finalBackup = BackupFile(
+                watchHistory = mergedHistory,
+                watchPositions = mergedPositions,
+                playlistBookmarks = mergedBookmarks,
+                searchHistory = mergedSearch,
+                groups = mergedGroups,
+                subscriptions = mergedSubs,
+                localPlaylists = mergedPlaylists,
+                playlists = emptyList()
+            )
+
+            context.contentResolver.openOutputStream(file.uri, "wt")?.use { outputStream ->
+                JsonHelper.json.encodeToStream(finalBackup, outputStream)
+            }
+            Log.d(TAG, "Safe Additive Export successful")
+
         } catch (e: Exception) {
-            Log.e(TAG(), "Error exporting auto-sync data", e)
+            Log.e(TAG, "Failed to export data", e)
         }
     }
 
@@ -97,33 +133,47 @@ object SafAutoSyncHelper {
     suspend fun importData(context: Context) = withContext(Dispatchers.IO) {
         val treeUri = getSyncUri(context) ?: return@withContext
         val treeFile = DocumentFile.fromTreeUri(context, treeUri)
-        val file = treeFile?.findFile(SYNC_FILE_NAME)
-
-        if (file == null || !file.exists()) {
-            return@withContext // 파일이 없으면 스킵
-        }
+        val file = treeFile?.findFile(SYNC_FILE_NAME) ?: return@withContext
 
         try {
             val backupData = context.contentResolver.openInputStream(file.uri)?.use { inputStream ->
                 JsonHelper.json.decodeFromStream<BackupFile>(inputStream)
             } ?: return@withContext
 
-            // 데이터 병합 (기존 데이터 유지 + 새 데이터 추가/갱신)
-            if (!backupData.watchHistory.isNullOrEmpty()) {
-                Database.watchHistoryDao().insertAll(backupData.watchHistory!!)
-            }
-            if (!backupData.watchPositions.isNullOrEmpty()) {
-                Database.watchPositionDao().insertAll(backupData.watchPositions!!)
-            }
+            // Batch Insert (Ignore/Replace handled by DAO)
+            backupData.watchHistory?.let { Database.watchHistoryDao().insertAll(it) }
+            backupData.watchPositions?.let { Database.watchPositionDao().insertAll(it) }
+            backupData.playlistBookmarks?.let { Database.playlistBookmarkDao().insertAll(it) }
+            backupData.searchHistory?.let { Database.searchHistoryDao().insertAll(it) }
+            backupData.groups?.let { Database.subscriptionGroupsDao().insertAll(it) }
+            backupData.subscriptions?.let { Database.localSubscriptionDao().insertAll(it) }
 
-            withContext(Dispatchers.Main) {
-                // 필요 시 토스트 출력
-                // context.toastFromMainDispatcher(R.string.backup_restore_success)
-            }
-            Log.d(TAG(), "Auto-sync import successful")
+            // Playlist Import Logic (Int ID)
+            backupData.localPlaylists?.forEach { imported ->
+                val existing = Database.localPlaylistsDao().getAll()
+                val match = existing.find { it.playlist.name == imported.playlist.name }
 
+                val targetId: Int = if (match != null) {
+                    match.playlist.id // Existing Int ID
+                } else {
+                    // Create new. Returns Long -> cast to Int
+                    val newIdLong = Database.localPlaylistsDao().createPlaylist(imported.playlist.copy(id = 0))
+                    newIdLong.toInt()
+                }
+
+                imported.videos.forEach { video ->
+                    try {
+                        val videoToInsert = video.copy(
+                            id = 0, // Int, Auto-increment
+                            playlistId = targetId // Int, Foreign Key
+                        )
+                        Database.localPlaylistsDao().addPlaylistVideo(videoToInsert)
+                    } catch (e: Exception) { /* Skip duplicates */ }
+                }
+            }
+            Log.d(TAG, "Additive Import successful")
         } catch (e: Exception) {
-            Log.e(TAG(), "Error importing auto-sync data", e)
+            Log.e(TAG, "Failed to import data", e)
         }
     }
 }
