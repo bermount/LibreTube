@@ -39,7 +39,7 @@ jobs:
           DATE=$(date +'%Y%m%d_%H%M%S')
           BRANCH_NAME=$(echo "${{ github.ref }}" | sed 's/refs\/heads\///g' | sed 's/\//-/g')
           APK_NAME="LibreTube_${BRANCH_NAME}_$DATE.apk"
-          mv ./app/build/outputs/apk/debug/app-arm64-v8a-debug.apk ./app/build/outputs/apk/debug/$APK_NAME
+          mv ./app/build/outputs/apk/debug/app-debug.apk ./app/build/outputs/apk/debug/$APK_NAME
           echo "apk_name=$APK_NAME" >> $GITHUB_OUTPUT
           echo "artifact_name=${APK_NAME%.apk}" >> $GITHUB_OUTPUT
 
