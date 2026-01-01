@@ -7,6 +7,7 @@ import android.os.IBinder
 import androidx.core.content.getSystemService
 import com.github.libretube.enums.NotificationId
 import com.github.libretube.helpers.BackgroundHelper
+import kotlinx.coroutines.launch
 
 class OnClearFromRecentService : Service() {
     private var nManager: NotificationManager? = null
@@ -23,8 +24,13 @@ class OnClearFromRecentService : Service() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        BackgroundHelper.stopBackgroundPlay(this)
-        nManager?.cancel(NotificationId.PLAYER_PLAYBACK.id)
+        // Auto-Export when app is removed from recent tasks
+        @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+        kotlinx.coroutines.GlobalScope.launch {
+            com.github.libretube.helpers.SafAutoSyncHelper.exportData(applicationContext)
+        }
+
+        super.onTaskRemoved(rootIntent)
         stopSelf()
     }
 }

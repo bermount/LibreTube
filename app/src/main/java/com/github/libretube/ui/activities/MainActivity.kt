@@ -100,6 +100,9 @@ class MainActivity : BaseActivity() {
         installSplashScreen()
         super.onCreate(savedInstanceState)
 
+        // Start service to detect when app is removed from recent tasks
+        startService(Intent(this, com.github.libretube.services.OnClearFromRecentService::class.java))
+
         // Auto-Import on Start
         lifecycleScope.launch {
             SafAutoSyncHelper.importData(this@MainActivity)
@@ -237,9 +240,12 @@ class MainActivity : BaseActivity() {
 
     override fun onDestroy() {
         // Auto-Export to SAF folder on exit
-        lifecycleScope.launch {
-            com.github.libretube.helpers.SafAutoSyncHelper.exportData(this@MainActivity)
+        // Fix: Use GlobalScope to survive Activity destruction
+        @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+        kotlinx.coroutines.GlobalScope.launch {
+            com.github.libretube.helpers.SafAutoSyncHelper.exportData(applicationContext)
         }
+
         super.onDestroy()
         // clean up the cache
         cacheDir.deleteRecursively()
