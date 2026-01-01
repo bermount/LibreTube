@@ -13,5 +13,5 @@ import kotlinx.serialization.Serializable
 data class WatchPosition(
     @PrimaryKey val videoId: String = "",
     @ColumnInfo val position: Long = 0L,
-    @ColumnInfo val lastModified: Long = System.currentTimeMillis()
+    @ColumnInfo(defaultValue = "0") val lastModified: Long = System.currentTimeMillis()
 )

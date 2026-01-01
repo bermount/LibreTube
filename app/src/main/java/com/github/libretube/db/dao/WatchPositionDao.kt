@@ -33,7 +33,4 @@ interface WatchPositionDao {
 
     @Query("DELETE FROM watchPosition WHERE videoId = :id")
     suspend fun deleteByVideoId(id: String)
-
-    @Query("DELETE FROM watchPosition")
-    suspend fun deleteAll()
 }
